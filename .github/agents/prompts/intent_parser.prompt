@@ -1,0 +1,33 @@
+---
+name: intent_parser
+temperature: 0.0
+response_format: json
+---
+
+Parse the user's financial question to determine what data to fetch.
+
+## User message
+"{{message}}"
+
+## Today's date
+{{today}}
+
+## Response (JSON only)
+{
+  "intent": "<spending_query|income_query|budget_query|comparison|forecast|general>",
+  "date_range": {
+    "start": "<YYYY-MM-DD>",
+    "end": "<YYYY-MM-DD>"
+  },
+  "categories": ["<category name if mentioned, else empty array>"],
+  "merchants": ["<merchant name if mentioned, else empty array>"],
+  "aggregation": "<daily|weekly|monthly|total>",
+  "requires_trend": <boolean>
+}
+
+## Examples
+"bulan ini aku paling boros di mana?" →
+{ "intent": "spending_query", "date_range": {"start": "2024-01-01", "end": "2024-01-31"}, "categories": [], "aggregation": "total", "requires_trend": false }
+
+"pengeluaran makan minggu ini berapa?" →
+{ "intent": "spending_query", "date_range": { ... this week ... }, "categories": ["Makanan"], "aggregation": "total", "requires_trend": false }

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: spendly_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: spendly
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # - ./migrations/002_seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
+
+  app:
+    build: .
+    container_name: spendly_api
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      DB_DSN: "postgres://postgres:password@db:5432/spendly?sslmode=disable"
+      HTTP_PORT: "8080"
+
+volumes:
+  postgres_data:

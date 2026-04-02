@@ -1,0 +1,29 @@
+---
+name: daily_digest
+model_override: gemini-1.5-pro
+temperature: 0.4
+response_format: json
+---
+
+Generate a short, friendly daily spending digest in Bahasa Indonesia.
+
+## Yesterday's transactions
+{{transactions | json}}
+
+## User's currency
+{{user_currency}}
+
+## Response (JSON only)
+{
+  "insight_type": "daily_digest",
+  "summary": "<1-2 sentence summary for push notification, max 100 chars>",
+  "insight": "<full digest, 3-5 sentences, conversational tone>",
+  "warning": "<string or null — only if something needs attention>",
+  "recommendation": null,
+  "supporting_data": {
+    "total_spent": <number>,
+    "transaction_count": <number>,
+    "top_merchant": "<string>",
+    "top_category": "<string>"
+  }
+}

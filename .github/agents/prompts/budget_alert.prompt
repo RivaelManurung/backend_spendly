@@ -1,0 +1,21 @@
+---
+name: budget_alert
+temperature: 0.3
+response_format: json
+---
+
+Write a friendly budget alert notification in Bahasa Indonesia.
+
+## Budget status
+Category: {{budget.category_name}}
+Limit: {{budget.limit_amount | currency}}
+Spent: {{budget.spent_amount | currency}}
+Threshold reached: {{threshold_pct}}%
+Days remaining in period: {{budget.days_remaining}}
+
+## Response (JSON only)
+{
+  "push_title": "<max 50 chars>",
+  "push_body": "<max 100 chars, friendly tone>",
+  "full_message": "<2-3 sentences with context and suggestion>"
+}
