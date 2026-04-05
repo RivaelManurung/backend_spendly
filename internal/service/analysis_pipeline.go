@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/spendly/backend/internal/ai"
 	"github.com/spendly/backend/internal/domain"
 	"github.com/spendly/backend/internal/repository"
@@ -18,14 +19,16 @@ type AnalysisPipeline struct {
 	repoTxn      repository.TransactionRepository
 	repoSnap     repository.AnalysisRepository
 	repoInsight  repository.InsightRepository
+	repoUser     repository.UserRepository
 }
 
-func NewAnalysisPipeline(g *ai.GeminiClient, repoTxn repository.TransactionRepository, repoSnap repository.AnalysisRepository, repoInsight repository.InsightRepository) *AnalysisPipeline {
+func NewAnalysisPipeline(g *ai.GeminiClient, repoTxn repository.TransactionRepository, repoSnap repository.AnalysisRepository, repoInsight repository.InsightRepository, repoUser repository.UserRepository) *AnalysisPipeline {
 	return &AnalysisPipeline{
 		gemini:      g,
 		repoTxn:     repoTxn,
 		repoSnap:    repoSnap,
 		repoInsight: repoInsight,
+		repoUser:    repoUser,
 	}
 }
 
@@ -45,6 +48,12 @@ func (p *AnalysisPipeline) RunBackgroundMonthlyJobs(ctx context.Context, userID 
 	snap := p.buildSnapshot(userID, start, end, txns)
 	snap.PeriodValue = period
 	snap.Status = "COMPLETED"
+
+	// 2.1 Calculate Forecast
+	user, _ := p.repoUser.GetByID(ctx, userID)
+	if user != nil {
+		p.enrichWithForecast(ctx, snap, user, txns)
+	}
 
 	// 3. Persist snapshot
 	if err := p.repoSnap.UpsertSnapshot(ctx, snap); err != nil {
@@ -83,6 +92,7 @@ func (p *AnalysisPipeline) RunBackgroundMonthlyJobs(ctx context.Context, userID 
 			vars: map[string]string{
 				"current_month": string(snapBytes),
 				"prev_month":    string(prevSnapBytes),
+				"subscriptions": string(p.detectSubscriptions(txns)),
 			},
 		},
 		{
@@ -130,13 +140,76 @@ func (p *AnalysisPipeline) RunBackgroundMonthlyJobs(ctx context.Context, userID 
 	return nil
 }
 
-func (p *AnalysisPipeline) buildSnapshot(userID uuid.UUID, start, end time.Time, txns []domain.Transaction) *domain.AnalysisSnapshot {
-	// Just a simple builder for now
-	return &domain.AnalysisSnapshot{
-		UserID:      userID,
-		PeriodType:  "MONTHLY",
-		PeriodStart: start,
-		PeriodEnd:   end,
-		// ... and other calculations ...
+func (p *AnalysisPipeline) enrichWithForecast(ctx context.Context, snap *domain.AnalysisSnapshot, user *domain.User, txns []domain.Transaction) {
+	now := time.Now()
+	// If current period is in the past, no forecast needed
+	if now.After(snap.PeriodEnd) {
+		return
 	}
+
+	daysInMonth := snap.PeriodEnd.Sub(snap.PeriodStart).Hours() / 24
+	daysElapsed := now.Sub(snap.PeriodStart).Hours() / 24
+	if daysElapsed < 1 {
+		daysElapsed = 1
+	}
+	daysRemaining := daysInMonth - daysElapsed
+
+	// Simple Burn Rate Calculation
+	dailyBurnRate := snap.TotalExpense.Div(decimal.NewFromFloat(daysElapsed))
+	projectedExtraExpense := dailyBurnRate.Mul(decimal.NewFromFloat(daysRemaining))
+	
+	// Predicted End balance = Income - Current Expense - Projected Expense
+	snap.ForecastEndBalance = snap.TotalIncome.Sub(snap.TotalExpense).Sub(projectedExtraExpense)
+	
+	// Calculate confidence based on data points
+	confidence := float64(len(txns)) / (daysElapsed * 2) // Rough heuristic
+	if confidence > 0.95 {
+		confidence = 0.95
+	}
+	snap.ForecastConfidence = confidence
+}
+
+func (p *AnalysisPipeline) detectSubscriptions(txns []domain.Transaction) []byte {
+	// Simple Logic: Group by merchant and check for recurring patterns
+	// In a real production app, this would be much more complex.
+	recurring := make(map[string]int)
+	for _, t := range txns {
+		if t.Merchant != nil {
+			recurring[*t.Merchant]++
+		}
+	}
+
+	var detected []string
+	for merchant, count := range recurring {
+		if count >= 1 { // If seen at least once per month
+			detected = append(detected, merchant)
+		}
+	}
+	res, _ := json.Marshal(detected)
+	return res
+}
+
+func (p *AnalysisPipeline) buildSnapshot(userID uuid.UUID, start, end time.Time, txns []domain.Transaction) *domain.AnalysisSnapshot {
+	snap := &domain.AnalysisSnapshot{
+		UserID:            userID,
+		PeriodType:        "MONTHLY",
+		PeriodStart:       start,
+		PeriodEnd:         end,
+		TransactionCount:  len(txns),
+		CategoryBreakdown: make(map[string]decimal.Decimal),
+		MerchantBreakdown: make(map[string]decimal.Decimal),
+		DailyTrend:        make(map[string]decimal.Decimal),
+	}
+
+	for _, t := range txns {
+		if t.Amount.GreaterThan(decimal.Zero) {
+			snap.TotalIncome = snap.TotalIncome.Add(t.AmountInBase)
+		} else {
+			snap.TotalExpense = snap.TotalExpense.Add(t.AmountInBase.Abs())
+		}
+		// ... more complex breakdown logic would go here ...
+	}
+	snap.NetSavings = snap.TotalIncome.Sub(snap.TotalExpense)
+	snap.NetCashflow = snap.NetSavings
+	return snap
 }

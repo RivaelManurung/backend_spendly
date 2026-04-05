@@ -38,13 +38,13 @@ func (r *analysisRepository) UpsertSnapshot(ctx context.Context, snapshot *domai
 		INSERT INTO analysis_snapshots (
 			user_id, period_type, period_value, total_income, total_expense,
 			net_savings, top_categories, category_breakdown, 
-			merchant_breakdown, daily_trend, status, metadata,
-			created_at, updated_at
+			merchant_breakdown, daily_trend, forecast_end_balance, forecast_confidence,
+			status, metadata, created_at, updated_at
 		) VALUES (
 			:user_id, :period_type, :period_value, :total_income, :total_expense,
 			:net_savings, :top_categories, :category_breakdown,
-			:merchant_breakdown, :daily_trend, :status, :metadata,
-			:created_at, :updated_at
+			:merchant_breakdown, :daily_trend, :forecast_end_balance, :forecast_confidence,
+			:status, :metadata, :created_at, :updated_at
 		)
 		ON CONFLICT (user_id, period_type, period_value) DO UPDATE SET
 			total_income = EXCLUDED.total_income,
@@ -54,6 +54,8 @@ func (r *analysisRepository) UpsertSnapshot(ctx context.Context, snapshot *domai
 			category_breakdown = EXCLUDED.category_breakdown,
 			merchant_breakdown = EXCLUDED.merchant_breakdown,
 			daily_trend = EXCLUDED.daily_trend,
+			forecast_end_balance = EXCLUDED.forecast_end_balance,
+			forecast_confidence = EXCLUDED.forecast_confidence,
 			status = EXCLUDED.status,
 			metadata = EXCLUDED.metadata,
 			updated_at = EXCLUDED.updated_at
@@ -80,8 +82,8 @@ func (r *analysisRepository) GetByPeriod(ctx context.Context, userID uuid.UUID, 
 		SELECT 
 			id, user_id, period_type, period_value, total_income, total_expense,
 			net_savings, top_categories, category_breakdown, 
-			merchant_breakdown, daily_trend, status, metadata,
-			created_at, updated_at
+			merchant_breakdown, daily_trend, forecast_end_balance, forecast_confidence,
+			status, metadata, created_at, updated_at
 		FROM analysis_snapshots
 		WHERE user_id = $1 AND period_value = $2
 	`

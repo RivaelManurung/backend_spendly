@@ -1,15 +1,13 @@
 package http
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spendly/backend/internal/handler/dto"
 	"github.com/spendly/backend/internal/repository"
-	"github.com/spendly/backend/pkg/apperror"
 )
 
 type TransactionHandler struct {
@@ -29,29 +27,26 @@ func NewTransactionHandler(repo repository.TransactionRepository) *TransactionHa
 // @Produce json
 // @Success 200 {array} dto.TransactionResponse
 // @Router /transactions [get]
-// @Security Bearer
-func (h *TransactionHandler) ListTransactions(w http.ResponseWriter, r *http.Request) {
-	// In a real app, userID would come from JWT context.
-	// For now, let's look for a query param or placeholder.
-	userIDStr := r.URL.Query().Get("user_id")
+func (h *TransactionHandler) ListTransactions(c *gin.Context) {
+	userIDStr := c.Query("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid user_id", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
+	limitStr := c.Query("limit")
 	limit, _ := strconv.Atoi(limitStr)
 	if limit <= 0 {
 		limit = 20
 	}
 
-	offsetStr := r.URL.Query().Get("offset")
+	offsetStr := c.Query("offset")
 	offset, _ := strconv.Atoi(offsetStr)
 
-	txns, err := h.repo.FindAllByUserID(r.Context(), userID, limit, offset)
+	txns, err := h.repo.FindAllByUserID(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		respondWithError(w, apperror.Internal("Failed to fetch transactions", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch transactions"})
 		return
 	}
 
@@ -74,7 +69,7 @@ func (h *TransactionHandler) ListTransactions(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	respondWithJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetByID returns a single transaction by ID
@@ -84,28 +79,27 @@ func (h *TransactionHandler) ListTransactions(w http.ResponseWriter, r *http.Req
 // @Param id path string true "Transaction UUID"
 // @Produce json
 // @Success 200 {object} dto.TransactionResponse
-// @Router /transactions/{id} [get]
-// @Security Bearer
-func (h *TransactionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
+// @Router /transactions/:id [get]
+func (h *TransactionHandler) GetByID(c *gin.Context) {
+	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid transaction ID", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid transaction ID"})
 		return
 	}
 
-	txn, err := h.repo.GetByID(r.Context(), id)
+	txn, err := h.repo.GetByID(c.Request.Context(), id)
 	if err != nil {
-		respondWithError(w, apperror.Internal("Failed to fetch transaction", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch transaction"})
 		return
 	}
 
 	if txn == nil {
-		respondWithError(w, apperror.NotFound("Transaction not found", nil))
+		c.JSON(http.StatusNotFound, gin.H{"error": "transaction not found"})
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, dto.TransactionResponse{
+	c.JSON(http.StatusOK, dto.TransactionResponse{
 		ID:                   txn.ID.String(),
 		CategoryID:           txn.CategoryID,
 		Amount:               txn.Amount,
@@ -119,17 +113,4 @@ func (h *TransactionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		AIConfidenceScore:    txn.AIConfidenceScore,
 		CreatedAt:            txn.CreatedAt,
 	})
-}
-
-// Helpers for responding (Usually these would be in a base handler or util package)
-
-func respondWithError(w http.ResponseWriter, err *apperror.AppError) {
-	respondWithJSON(w, err.Code, map[string]string{"error": err.Message})
-}
-
-func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	response, _ := json.Marshal(payload)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	w.Write(response)
 }

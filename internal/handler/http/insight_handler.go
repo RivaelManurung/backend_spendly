@@ -4,10 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spendly/backend/internal/repository"
-	"github.com/spendly/backend/pkg/apperror"
 )
 
 type InsightHandler struct {
@@ -18,30 +17,30 @@ func NewInsightHandler(repo repository.InsightRepository) *InsightHandler {
 	return &InsightHandler{repo: repo}
 }
 
-// ListUnread returns unread insights for a user
-// @Summary List Unread Insights
-// @Description Get current user's unread AI insights
-// @Tags insights
-// @Param user_id query string true "User UUID"
-// @Produce json
-// @Success 200 {array} domain.AIInsight
-// @Router /insights/unread [get]
-// @Security Bearer
-func (h *InsightHandler) ListUnread(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.URL.Query().Get("user_id")
+// GetLatestInsights returns the most recent insights for a user
+func (h *InsightHandler) GetLatestInsights(c *gin.Context) {
+	h.ListUnread(c)
+}
+
+// ListUnread returns unread insights for a user (alias for GetLatestInsights)
+func (h *InsightHandler) ListUnread(c *gin.Context) {
+	userIDStr := c.Query("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid user_id", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
 		return
 	}
 
-	insights, err := h.repo.ListUnread(r.Context(), userID)
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+
+	insights, err := h.repo.GetLatestByUserID(c.Request.Context(), userID, limit)
 	if err != nil {
-		respondWithError(w, apperror.Internal("Failed to fetch insights", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, insights)
+	c.JSON(http.StatusOK, insights)
 }
 
 // MarkAsRead marks an insight as read
@@ -52,19 +51,18 @@ func (h *InsightHandler) ListUnread(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Success 200 {object} map[string]string
 // @Router /insights/{id}/read [patch]
-// @Security Bearer
-func (h *InsightHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
+func (h *InsightHandler) MarkAsRead(c *gin.Context) {
+	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid insight ID", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid insight ID"})
 		return
 	}
 
-	if err := h.repo.MarkRead(r.Context(), id); err != nil {
-		respondWithError(w, apperror.Internal("Failed to mark insight as read", err))
+	if err := h.repo.MarkRead(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

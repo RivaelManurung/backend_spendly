@@ -25,6 +25,8 @@ type AnalysisSnapshot struct {
 	CategoryBreakdown  map[string]decimal.Decimal `db:"category_breakdown" json:"category_breakdown"`
 	MerchantBreakdown  map[string]decimal.Decimal `db:"merchant_breakdown" json:"merchant_breakdown"`
 	DailyTrend        map[string]decimal.Decimal `db:"daily_trend" json:"daily_trend"`
+	ForecastEndBalance decimal.Decimal           `db:"forecast_end_balance" json:"forecast_end_balance"`
+	ForecastConfidence float64                  `db:"forecast_confidence" json:"forecast_confidence"`
 	Status            string                     `db:"status" json:"status"` // e.g. "PENDING", "COMPLETED"
 	Metadata          json.RawMessage            `db:"metadata" json:"metadata"`
 	CreatedAt         time.Time                  `db:"created_at" json:"created_at"`

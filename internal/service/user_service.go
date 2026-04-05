@@ -51,12 +51,18 @@ func (s *userService) RegisterUser(ctx context.Context, email, name, avatarURL, 
 		Email:              email,
 		Status:             "active",
 		CurrencyPreference: currencyPref,
+		SalaryCycleDay:     1, // Default gajian tanggal 1
+		RiskProfile:        "conservative",
+		AIAnalystPersona:   "supportive",
 	}
 	if name != "" {
 		newUser.Name = &name
 	}
 	if avatarURL != "" {
 		newUser.AvatarURL = &avatarURL
+	}
+	if newUser.FinancialGoals == nil {
+		newUser.FinancialGoals = []string{}
 	}
 
 	if err := s.repo.Create(ctx, newUser); err != nil {
@@ -82,6 +88,10 @@ func (s *userService) UpdateUser(ctx context.Context, user *domain.User) error {
 	// Validasi business rules jika ada (misal status aktif/non-aktif)
 	if user.Status != "active" && user.Status != "deactivated" {
 		return errors.New("invalid user status")
+	}
+
+	if user.SalaryCycleDay < 1 || user.SalaryCycleDay > 31 {
+		return errors.New("invalid salary cycle day: must be between 1 and 31")
 	}
 
 	if err := s.repo.Update(ctx, user); err != nil {

@@ -1,11 +1,10 @@
 package http
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/spendly/backend/internal/handler/dto"
-	"github.com/spendly/backend/pkg/apperror"
 )
 
 type AuthHandler struct {
@@ -24,10 +23,10 @@ func NewAuthHandler() *AuthHandler {
 // @Param body body dto.LoginRequest true "Login ID Token"
 // @Success 200 {object} dto.TokenResponse
 // @Router /auth/google [post]
-func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	var req dto.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid JSON body", err))
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
 		return
 	}
 
@@ -40,7 +39,7 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		TokenType:    "Bearer",
 	}
 
-	respondWithJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
 // RefreshToken handles token refresh requests
@@ -52,7 +51,6 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 // @Param body body dto.RefreshRequest true "Refresh token"
 // @Success 200 {object} dto.TokenResponse
 // @Router /auth/refresh [post]
-func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	c := map[string]string{"message": "Not implemented"}
-	respondWithJSON(w, http.StatusNotImplemented, c)
+func (h *AuthHandler) RefreshToken(c *gin.Context) {
+	c.JSON(http.StatusNotImplemented, gin.H{"message": "Not implemented"})
 }

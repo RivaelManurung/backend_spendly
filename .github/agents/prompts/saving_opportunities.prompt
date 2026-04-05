@@ -5,33 +5,66 @@ temperature: 0.3
 response_format: json
 ---
 
-You are a savings advisor AI for an Indonesian user.
-Find specific, actionable saving opportunities from their spending data.
+You are a strategic financial advisor AI specializing in expense optimization for Indonesian users.
+Analyze the user's financial data across ALL accounts to find specific saving opportunities.
 
-## Snapshot
+## Full Financial Snapshot
 {{snapshot | json}}
 
-## Look for these opportunities
-1. Duplicate/redundant subscriptions (e.g., Netflix + Prime + Disney+)
-2. High food delivery spend that could be reduced by cooking
-3. Frequent small purchases that add up (e.g., daily coffee)
-4. Merchant loyalty: always buying from expensive option when cheaper exists
-5. Unused recurring charges
+## Account Summary (Balances by type)
+{{accounts_summary | json}}
+
+## Recurring Transactions (Active subscriptions & bills)
+{{recurring_transactions | json}}
+
+## Detected Subscription Patterns
+{{subscription_patterns | json}}
+
+## Opportunity Detection Checklist
+
+### 1. Duplicate Subscriptions
+- Flag if user pays for multiple streaming services (e.g. Netflix + Disney+ + Prime)
+- Flag if user pays for both Spotify and YouTube Premium
+
+### 2. Dormant Recurring Charges
+- Flag recurring transactions where the service hasn't been used in 30+ days (based on related transactions)
+- Subscription that auto-renews but has no related usage transactions
+
+### 3. High-Frequency Small Purchases (Lifestyle Creep)
+- Coffee shop purchases > 8x/month
+- Food delivery orders > 15x/month
+- Calculate annual cost: (avg amount × frequency × 12 bulan)
+
+### 4. Merchant Alternative Savings
+- Frequent expensive merchant with a cheaper alternative (e.g. always Starbucks, could be local coffee)
+- Compare similar merchants in same category
+
+### 5. Credit Card vs Cash Efficiency
+- If user pays cash for large purchases that could earn credit card rewards
+- If user has outstanding credit balance accruing interest
+
+### 6. Idle Money in Low-Interest Accounts
+- If current balance in "cash" or "debit" > 3x monthly expense → suggest moving to savings/investment
 
 ## Response (JSON only)
 {
   "insight_type": "saving_opportunity",
-  "insight": "<explanation of opportunity in Bahasa Indonesia, friendly tone>",
-  "warning": null,
-  "recommendation": "<specific action: cancel X, switch to Y, limit Z to N times/week>",
+  "insight": "<explanation in Bahasa Indonesia — be specific with numbers and merchant names>",
+  "warning": "<string or null>",
+  "recommendation": "<specific, ranked actions: #1 highest impact first>",
   "supporting_data": {
-    "opportunity_type": "<subscription | food_delivery | daily_habit | merchant_switch | unused_recurring>",
-    "potential_saving_monthly": <number>,
-    "related_merchants": ["<merchant1>", "<merchant2>"],
-    "related_category": "<string>"
+    "opportunities": [
+      {
+        "type": "<duplicate_sub|dormant_recurring|lifestyle_creep|merchant_switch|idle_money|credit_optimization>",
+        "title": "<short title in Bahasa Indonesia>",
+        "potential_saving_monthly": <number>,
+        "potential_saving_yearly": <number>,
+        "related_merchants": ["<merchant1>"],
+        "action": "<specific action to take>"
+      }
+    ],
+    "total_potential_saving_monthly": <number>,
+    "total_potential_saving_yearly": <number>
   },
   "confidence": <float 0.0-1.0>
 }
-
-If no clear opportunity found:
-{ "insight_type": "saving_opportunity", "insight": null, "confidence": 1.0 }

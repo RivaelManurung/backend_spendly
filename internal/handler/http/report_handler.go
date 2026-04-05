@@ -3,9 +3,9 @@ package http
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spendly/backend/internal/repository"
-	"github.com/spendly/backend/pkg/apperror"
 )
 
 type ReportHandler struct {
@@ -24,30 +24,29 @@ func NewReportHandler(repo repository.AnalysisRepository) *ReportHandler {
 // @Produce json
 // @Success 200 {object} domain.AnalysisSnapshot
 // @Router /reports/latest [get]
-// @Security Bearer
-func (h *ReportHandler) GetLatestReport(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.URL.Query().Get("user_id")
+func (h *ReportHandler) GetLatestReport(c *gin.Context) {
+	userIDStr := c.Query("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid user_id", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
 		return
 	}
 
-	snapshot, err := h.repo.GetLatestByUserID(r.Context(), userID, "MONTHLY")
+	snapshot, err := h.repo.GetLatestByUserID(c.Request.Context(), userID, "MONTHLY")
 	if err != nil {
-		respondWithError(w, apperror.Internal("Failed to fetch latest report", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch latest report"})
 		return
 	}
 
 	if snapshot == nil {
-		respondWithError(w, apperror.NotFound("No analysis found", nil))
+		c.JSON(http.StatusNotFound, gin.H{"error": "no analysis found"})
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, snapshot)
+	c.JSON(http.StatusOK, snapshot)
 }
-func (h *ReportHandler) TriggerAnalysis(w http.ResponseWriter, r *http.Request) {
+
+func (h *ReportHandler) TriggerAnalysis(c *gin.Context) {
 	// ... manually trigger a snapshot generation for testing
-	c := map[string]string{"message": "Analysis queued"}
-	respondWithJSON(w, http.StatusOK, c)
+	c.JSON(http.StatusOK, gin.H{"message": "Analysis queued"})
 }

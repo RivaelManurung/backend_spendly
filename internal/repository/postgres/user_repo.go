@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"github.com/spendly/backend/internal/domain"
 	"github.com/spendly/backend/internal/repository"
@@ -35,10 +36,23 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 	user.UpdatedAt = now
 
 	query := `
-		INSERT INTO users (id, email, name, avatar_url, status, currency_preference, created_at, updated_at)
-		VALUES (:id, :email, :name, :avatar_url, :status, :currency_preference, :created_at, :updated_at)
+		INSERT INTO users (
+			id, email, name, avatar_url, status, currency_preference, 
+			salary_cycle_day, financial_goals, risk_profile, ai_analyst_persona, 
+			created_at, updated_at
+		) VALUES (
+			:id, :email, :name, :avatar_url, :status, :currency_preference, 
+			:salary_cycle_day, :financial_goals, :risk_profile, :ai_analyst_persona, 
+			:created_at, :updated_at
+		)
 	`
-	_, err := r.db.NamedExecContext(ctx, query, user)
+	_, err := r.db.NamedExecContext(ctx, query, struct {
+		*domain.User
+		FinancialGoals pq.StringArray `db:"financial_goals"`
+	}{
+		User:           user,
+		FinancialGoals: pq.StringArray(user.FinancialGoals),
+	})
 	if err != nil {
 		return fmt.Errorf("userRepository.Create: %w", err)
 	}
@@ -48,7 +62,10 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 
 func (r *userRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	query := `
-		SELECT 	id, email, name, avatar_url, status, currency_preference, created_at, updated_at, deleted_at
+		SELECT 	
+			id, email, name, avatar_url, status, currency_preference, 
+			salary_cycle_day, financial_goals, risk_profile, ai_analyst_persona, 
+			created_at, updated_at, deleted_at
 		FROM users
 		WHERE id = $1 AND deleted_at IS NULL
 	`
@@ -66,7 +83,10 @@ func (r *userRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Use
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	query := `
-		SELECT 	id, email, name, avatar_url, status, currency_preference, created_at, updated_at, deleted_at
+		SELECT 	
+			id, email, name, avatar_url, status, currency_preference, 
+			salary_cycle_day, financial_goals, risk_profile, ai_analyst_persona, 
+			created_at, updated_at, deleted_at
 		FROM users
 		WHERE email = $1 AND deleted_at IS NULL
 	`
@@ -90,10 +110,20 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 			avatar_url = :avatar_url,
 			status = :status,
 			currency_preference = :currency_preference,
+			salary_cycle_day = :salary_cycle_day,
+			financial_goals = :financial_goals,
+			risk_profile = :risk_profile,
+			ai_analyst_persona = :ai_analyst_persona,
 			updated_at = :updated_at
 		WHERE id = :id AND deleted_at IS NULL
 	`
-	_, err := r.db.NamedExecContext(ctx, query, user)
+	_, err := r.db.NamedExecContext(ctx, query, struct {
+		*domain.User
+		FinancialGoals pq.StringArray `db:"financial_goals"`
+	}{
+		User:           user,
+		FinancialGoals: pq.StringArray(user.FinancialGoals),
+	})
 	if err != nil {
 		return fmt.Errorf("userRepository.Update: %w", err)
 	}
@@ -119,7 +149,14 @@ func (r *userRepository) UpdateCurrencyPreference(ctx context.Context, userID uu
 }
 
 func (r *userRepository) GetAllActive(ctx context.Context) ([]domain.User, error) {
-	query := `SELECT id, email, name, avatar_url, status, currency_preference, created_at, updated_at FROM users WHERE deleted_at IS NULL`
+	query := `
+		SELECT 
+			id, email, name, avatar_url, status, currency_preference, 
+			salary_cycle_day, financial_goals, risk_profile, ai_analyst_persona, 
+			created_at, updated_at 
+		FROM users 
+		WHERE deleted_at IS NULL
+	`
 	var users []domain.User
 	if err := r.db.SelectContext(ctx, &users, query); err != nil {
 		return nil, fmt.Errorf("userRepository.GetAllActive: %w", err)

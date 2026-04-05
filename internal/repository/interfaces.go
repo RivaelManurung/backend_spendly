@@ -62,3 +62,26 @@ type CategoryRepository interface {
 	ListByUser(ctx context.Context, userID uuid.UUID) ([]domain.Category, error)
 	GetByID(ctx context.Context, id int64) (*domain.Category, error)
 }
+
+// RecurringRepository handles scheduled/recurring transaction templates.
+type RecurringRepository interface {
+	Create(ctx context.Context, rec *domain.RecurringTransaction) error
+	GetByID(ctx context.Context, id int64) (*domain.RecurringTransaction, error)
+	GetActiveByUser(ctx context.Context, userID uuid.UUID) ([]domain.RecurringTransaction, error)
+	GetDueBy(ctx context.Context, dueDate time.Time) ([]domain.RecurringTransaction, error)
+	UpdateNextDueDate(ctx context.Context, id int64, nextDue time.Time) error
+	SetActive(ctx context.Context, id int64, active bool) error
+	Delete(ctx context.Context, id int64) error
+}
+
+// AccountRepository handles multiple financial accounts per user.
+type AccountRepository interface {
+	Create(ctx context.Context, account *domain.Account) error
+	GetByID(ctx context.Context, id int64) (*domain.Account, error)
+	GetAllByUser(ctx context.Context, userID uuid.UUID) ([]domain.Account, error)
+	UpdateBalance(ctx context.Context, id int64, newBalance interface{}) error
+	Update(ctx context.Context, account *domain.Account) error
+	SoftDelete(ctx context.Context, id int64) error
+	CreateTransfer(ctx context.Context, transfer *domain.AccountTransfer) error
+	GetTransfersByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]domain.AccountTransfer, error)
+}

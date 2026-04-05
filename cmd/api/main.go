@@ -12,6 +12,7 @@ import (
 	"github.com/spendly/backend/internal/config"
 	handlers "github.com/spendly/backend/internal/handler/http"
 	"github.com/spendly/backend/internal/repository/postgres"
+	"github.com/spendly/backend/internal/scheduler"
 	"github.com/spendly/backend/internal/service"
 
 	_ "github.com/spendly/backend/docs"
@@ -56,43 +57,76 @@ func main() {
 	defer gemini.Close()
 
 	// 4. Initialize Repositories
-	repoUser := postgres.NewUserRepository(db.DB)
-	repoSnap := postgres.NewAnalysisRepository(db.DB)
-	repoInsight := postgres.NewInsightRepository(db.DB)
-	// repoBudget := postgres.NewBudgetRepository(db.DB)
+	repoUser     := postgres.NewUserRepository(db.DB)
+	repoSnap     := postgres.NewAnalysisRepository(db.DB)
+	repoInsight  := postgres.NewInsightRepository(db.DB)
+	repoBudget   := postgres.NewBudgetRepository(db.DB)
+	repoTxn      := postgres.NewTransactionRepository(db.DB)
+	repoRecurring := postgres.NewRecurringRepository(db.DB)
+	repoAccount  := postgres.NewAccountRepository(db.DB)
 
-	// 5. Initialize Services/Pipelines
-	// Note: We need a TransactionRepository here, I'll assume it's created or we skip for now
-	repoTxn := postgres.NewTransactionRepository(db.DB)
-	analysisPipeline := service.NewAnalysisPipeline(gemini, repoTxn, repoSnap)
+	// Silence unused variable warnings for repos not yet used in handlers
+	_ = repoBudget
+	_ = repoAccount
 
-	// 6. Initialize Handlers
+	// 5. Initialize Services
+	analysisPipeline := service.NewAnalysisPipeline(
+		gemini, repoTxn, repoSnap, repoInsight, repoUser,
+	)
+	dailyDigestSvc := service.NewDailyDigestService(
+		gemini, repoTxn, repoInsight, repoBudget,
+	)
+	recurringSvc := service.NewRecurringService(
+		gemini, repoRecurring, repoTxn, repoInsight,
+	)
+	netWorthSvc := service.NewNetWorthService(
+		gemini, repoInsight, repoUser,
+	)
+
+	// 6. Initialize Scheduler & Background Jobs
+	sched := scheduler.NewScheduler()
+	sched.AddMonthlyAnalysisJob(analysisPipeline, repoUser)
+	sched.AddDailyBudgetJob(repoUser, repoBudget)
+	sched.AddDailyTasks(repoUser, dailyDigestSvc, recurringSvc, netWorthSvc)
+	
+	// Start Scheduler
+	log.Println("Starting Background Scheduler...")
+	sched.Start()
+	defer sched.Stop()
+
+	// 7. Initialize Handlers
 	analysisHandler := handlers.NewAnalysisHandler(repoSnap)
-	insightHandler := handlers.NewInsightHandler(repoInsight)
+	insightHandler  := handlers.NewInsightHandler(repoInsight)
+	userHandler     := handlers.NewUserHandler(repoUser)
 
-	// Silence unused warnings
-	_, _, _ = repoUser, analysisPipeline, repoTxn
-
-	// 7. Setup Router & Routes
+	// 8. Setup Router & Routes
 	r := gin.Default()
 
 	api := r.Group("/api/v1")
 	{
+		// User Profile
+		api.GET("/users/:id",  userHandler.GetProfile)
+		api.PUT("/users/:id",  userHandler.UpdateProfile)
+
 		// Analysis & Insights
-		api.GET("/analysis/latest", analysisHandler.GetLatestSnapshot)
-		api.GET("/insights/latest", insightHandler.GetLatestInsights)
-		api.PATCH("/insights/:id/read", insightHandler.MarkAsRead)
+		api.GET("/analysis/latest",        analysisHandler.GetLatestSnapshot)
+		api.GET("/insights/latest",         insightHandler.GetLatestInsights)
+		api.PATCH("/insights/:id/read",     insightHandler.MarkAsRead)
 
 		// Basic Health Check
 		api.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "ok",
+				"service": "Spendly Backend",
+				"version": "1.0.0",
+			})
 		})
 	}
 
 	// Swagger Route
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// 8. Start Service
+	// 8. Start Server
 	log.Printf("Spendly Backend starting on port %s (%s environment)\n", cfg.HTTPPort, cfg.AppEnv)
 	if err := r.Run(":" + cfg.HTTPPort); err != nil {
 		log.Fatalf("Router failed to run: %v", err)

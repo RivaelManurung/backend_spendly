@@ -3,10 +3,10 @@ package http
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spendly/backend/internal/handler/dto"
 	"github.com/spendly/backend/internal/repository"
-	"github.com/spendly/backend/pkg/apperror"
 )
 
 type BudgetHandler struct {
@@ -25,24 +25,23 @@ func NewBudgetHandler(repo repository.BudgetRepository) *BudgetHandler {
 // @Produce json
 // @Success 200 {array} dto.BudgetResponse
 // @Router /budgets [get]
-// @Security Bearer
-func (h *BudgetHandler) ListActiveBudgets(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.URL.Query().Get("user_id")
+func (h *BudgetHandler) ListActiveBudgets(c *gin.Context) {
+	userIDStr := c.Query("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		respondWithError(w, apperror.BadRequest("Invalid user_id", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
 		return
 	}
 
-	budgets, err := h.repo.GetActiveBudgetsByUser(r.Context(), userID)
+	budgets, err := h.repo.GetActiveBudgetsByUser(c.Request.Context(), userID)
 	if err != nil {
-		respondWithError(w, apperror.Internal("Failed to fetch budgets", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch budgets"})
 		return
 	}
 
 	resp := make([]dto.BudgetResponse, len(budgets))
 	for i, b := range budgets {
-		spent, _ := h.repo.GetSpentAmount(r.Context(), b.ID)
+		spent, _ := h.repo.GetSpentAmount(c.Request.Context(), b.ID)
 		usagePercent := 0.0
 		limitF, _ := b.LimitAmount.Float64()
 		if limitF > 0 {
@@ -66,10 +65,9 @@ func (h *BudgetHandler) ListActiveBudgets(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	respondWithJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *BudgetHandler) CreateBudget(w http.ResponseWriter, r *http.Request) {
-	c := map[string]string{"message": "Not implemented"}
-	respondWithJSON(w, http.StatusNotImplemented, c)
+func (h *BudgetHandler) CreateBudget(c *gin.Context) {
+	c.JSON(http.StatusNotImplemented, gin.H{"message": "Not implemented"})
 }
