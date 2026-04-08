@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("Could not start SQLite DB: %v", err)
 	}
 
-	// === DI Container (Repositories) ===
+	catRepo := repository.NewCategoryRepository(db)
 	txRepo := repository.NewTransactionRepository(db)
 	goalRepo := repository.NewGoalRepository(db)
 	budgetRepo := repository.NewBudgetRepository(db)
@@ -39,6 +39,7 @@ func main() {
 	cronJob.StartCron(ctx)
 
 	// === DI Container (Services) ===
+	catSvc := service.NewCategoryService(catRepo)
 	txSvc := service.NewTransactionService(txRepo)
 	aiSvc := service.NewAIService(ctx, txRepo, cfg)
 	goalSvc := service.NewGoalService(goalRepo)
@@ -48,6 +49,7 @@ func main() {
 	syncSvc := service.NewSyncService(txRepo)
 
 	// === DI Container (Handlers) ===
+	catH := handler.NewCategoryHandler(catSvc)
 	txH := handler.NewTransactionHandler(txSvc)
 	ocrH := handler.NewOCRHandler(aiSvc)
 	goalH := handler.NewGoalHandler(goalSvc)
@@ -67,6 +69,13 @@ func main() {
 				"env":     cfg.Env,
 			})
 		})
+
+		// Categories
+		catRoutes := api.Group("/categories")
+		{
+			catRoutes.POST("/", catH.Create)
+			catRoutes.GET("/", catH.List)
+		}
 
 		// Transactions
 		txRoutes := api.Group("/transactions")
