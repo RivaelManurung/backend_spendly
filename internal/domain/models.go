@@ -40,7 +40,7 @@ type Transaction struct {
 	Category    Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 	Type        string    `gorm:"type:text;not null" json:"type"` // 'income', 'expense', 'goal'
 	Note        string    `gorm:"type:text" json:"note"`
-	IsRecurring bool      `gorm:"type:integer" json:"is_recurring"` // boolean simulation via integer handled by GORM
+	IsRecurring bool      `gorm:"type:boolean" json:"is_recurring"` 
 	DeviceID    string    `gorm:"type:text;index" json:"device_id"`
 }
 
