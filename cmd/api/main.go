@@ -3,132 +3,125 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/spendly/backend/internal/ai"
 	"github.com/spendly/backend/internal/bootstrap"
 	"github.com/spendly/backend/internal/config"
-	handlers "github.com/spendly/backend/internal/handler/http"
-	"github.com/spendly/backend/internal/repository/postgres"
+	handler "github.com/spendly/backend/internal/handler/http"
+	"github.com/spendly/backend/internal/repository"
 	"github.com/spendly/backend/internal/scheduler"
 	"github.com/spendly/backend/internal/service"
-
-	_ "github.com/spendly/backend/docs"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-// @title Spendly API
-// @version 1.0
-// @description Backend API for Spendly Personal Finance Tracker.
-// @host localhost:8080
-// @BasePath /api/v1
 func main() {
-	// 1. Load Configurations
+	// Initialize Config
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		log.Fatalf("Fail loading config: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// 2. Initialize Database Connection (PostgreSQL via sqlx)
-	dbCfg := bootstrap.ConfigDB{
-		DSN:             cfg.Database.DSN,
-		MaxOpenConns:    cfg.Database.MaxOpenConns,
-		MaxIdleConns:    cfg.Database.MaxIdleConns,
-		ConnMaxLifetime: time.Duration(cfg.Database.ConnMaxLifetime) * time.Minute,
-		ConnMaxIdleTime: time.Duration(cfg.Database.ConnMaxIdleTime) * time.Minute,
-	}
-	db, err := bootstrap.NewPostgresDB(ctx, dbCfg)
+	// Setup SQLite + GORM Database
+	db, err := bootstrap.InitDatabase(cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("Could not start SQLite DB: %v", err)
 	}
-	defer db.Close()
 
-	// 3. Initialize AI Client (Gemini)
-	gemini, err := ai.NewGeminiClient(context.Background(), cfg.GeminiApiKey)
-	if err != nil {
-		log.Fatalf("Failed to initialize Gemini: %v", err)
-	}
-	defer gemini.Close()
+	// === DI Container (Repositories) ===
+	txRepo := repository.NewTransactionRepository(db)
+	goalRepo := repository.NewGoalRepository(db)
+	budgetRepo := repository.NewBudgetRepository(db)
+	invoiceRepo := repository.NewInvoiceRepository(db)
 
-	// 4. Initialize Repositories
-	repoUser     := postgres.NewUserRepository(db.DB)
-	repoSnap     := postgres.NewAnalysisRepository(db.DB)
-	repoInsight  := postgres.NewInsightRepository(db.DB)
-	repoBudget   := postgres.NewBudgetRepository(db.DB)
-	repoTxn      := postgres.NewTransactionRepository(db.DB)
-	repoRecurring := postgres.NewRecurringRepository(db.DB)
-	repoAccount  := postgres.NewAccountRepository(db.DB)
+	ctx := context.Background()
 
-	// Silence unused variable warnings for repos not yet used in handlers
-	_ = repoBudget
-	_ = repoAccount
+	// === Background Jobs / Cron ===
+	cronJob := scheduler.NewDailyJob(db)
+	cronJob.StartCron(ctx)
 
-	// 5. Initialize Services
-	analysisPipeline := service.NewAnalysisPipeline(
-		gemini, repoTxn, repoSnap, repoInsight, repoUser,
-	)
-	dailyDigestSvc := service.NewDailyDigestService(
-		gemini, repoTxn, repoInsight, repoBudget,
-	)
-	recurringSvc := service.NewRecurringService(
-		gemini, repoRecurring, repoTxn, repoInsight,
-	)
-	netWorthSvc := service.NewNetWorthService(
-		gemini, repoInsight, repoUser,
-	)
+	// === DI Container (Services) ===
+	txSvc := service.NewTransactionService(txRepo)
+	aiSvc := service.NewAIService(ctx, txRepo, cfg)
+	goalSvc := service.NewGoalService(goalRepo)
+	budgetSvc := service.NewBudgetService(budgetRepo, txRepo)
+	invoiceSvc := service.NewInvoiceService(invoiceRepo)
+	reportSvc := service.NewReportService(txRepo)
+	syncSvc := service.NewSyncService(txRepo)
 
-	// 6. Initialize Scheduler & Background Jobs
-	sched := scheduler.NewScheduler()
-	sched.AddMonthlyAnalysisJob(analysisPipeline, repoUser)
-	sched.AddDailyBudgetJob(repoUser, repoBudget)
-	sched.AddDailyTasks(repoUser, dailyDigestSvc, recurringSvc, netWorthSvc)
-	
-	// Start Scheduler
-	log.Println("Starting Background Scheduler...")
-	sched.Start()
-	defer sched.Stop()
+	// === DI Container (Handlers) ===
+	txH := handler.NewTransactionHandler(txSvc)
+	ocrH := handler.NewOCRHandler(aiSvc)
+	goalH := handler.NewGoalHandler(goalSvc)
+	budgetH := handler.NewBudgetHandler(budgetSvc)
+	invoiceH := handler.NewInvoiceHandler(invoiceSvc)
+	analyticsH := handler.NewAnalyticsHandler(reportSvc, syncSvc)
 
-	// 7. Initialize Handlers
-	analysisHandler := handlers.NewAnalysisHandler(repoSnap)
-	insightHandler  := handlers.NewInsightHandler(repoInsight)
-	userHandler     := handlers.NewUserHandler(repoUser)
-
-	// 8. Setup Router & Routes
+	// Create Gin Router
 	r := gin.Default()
 
+	// App Routes (All public for local single-user mode)
 	api := r.Group("/api/v1")
 	{
-		// User Profile
-		api.GET("/users/:id",  userHandler.GetProfile)
-		api.PUT("/users/:id",  userHandler.UpdateProfile)
-
-		// Analysis & Insights
-		api.GET("/analysis/latest",        analysisHandler.GetLatestSnapshot)
-		api.GET("/insights/latest",         insightHandler.GetLatestInsights)
-		api.PATCH("/insights/:id/read",     insightHandler.MarkAsRead)
-
-		// Basic Health Check
-		api.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"status":  "ok",
-				"service": "Spendly Backend",
-				"version": "1.0.0",
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message": "pong! spendly core running (Local Single-User Mode)",
+				"env":     cfg.Env,
 			})
 		})
+
+		// Transactions
+		txRoutes := api.Group("/transactions")
+		{
+			txRoutes.POST("/", txH.Create)
+			txRoutes.GET("/", txH.GetTransactions)
+		}
+
+		// AI Analyst & Scanner
+		aiRoutes := api.Group("/ai")
+		{
+			aiRoutes.POST("/scan", ocrH.ScanReceipt)
+			aiRoutes.GET("/advice", func(c *gin.Context) {
+				advice, err := aiSvc.GetFinancialAdvice(c.Request.Context())
+				if err != nil {
+					c.JSON(500, gin.H{"error": "AI failure: " + err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"advice": advice})
+			})
+		}
+
+		// Goals
+		goalRoutes := api.Group("/goals")
+		{
+			goalRoutes.POST("/", goalH.Create)
+			goalRoutes.GET("/", goalH.List)
+			goalRoutes.POST("/:id/contribute", goalH.AddContribution)
+		}
+
+		// Budgets
+		budgetRoutes := api.Group("/budgets")
+		{
+			budgetRoutes.POST("/", budgetH.Create)
+			budgetRoutes.GET("/status", budgetH.Status)
+		}
+
+		// Invoices (Freelance Module)
+		invoiceRoutes := api.Group("/invoices")
+		{
+			invoiceRoutes.POST("/", invoiceH.Create)
+			invoiceRoutes.GET("/:id/pdf", invoiceH.GeneratePDF)
+		}
+
+		// Analytics & Sync
+		analyticsRoutes := api.Group("/data")
+		{
+			analyticsRoutes.GET("/sync", analyticsH.SynchronizeChanges)
+			analyticsRoutes.GET("/reports/monthly", analyticsH.GetMonthlyReport)
+		}
 	}
 
-	// Swagger Route
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
-	// 8. Start Server
-	log.Printf("Spendly Backend starting on port %s (%s environment)\n", cfg.HTTPPort, cfg.AppEnv)
-	if err := r.Run(":" + cfg.HTTPPort); err != nil {
-		log.Fatalf("Router failed to run: %v", err)
+	// Start App
+	log.Printf("Starting Server on :%s", cfg.Port)
+	if err := r.Run(":" + cfg.Port); err != nil {
+		log.Fatalf("Failed to run HTTP server: %v", err)
 	}
 }

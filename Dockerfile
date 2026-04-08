@@ -1,5 +1,5 @@
 # Stage 1: Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git gcc musl-dev
@@ -30,12 +30,12 @@ WORKDIR /root/
 COPY --from=builder /app/main .
 
 # Copy migrations and agents (if needed by the app)
-COPY --from=builder /app/migrations ./migrations
-COPY --from=builder /app/.github/agents ./agents
+# COPY --from=builder /app/migrations ./migrations
+# COPY --from=builder /app/.github/agents ./agents
 # Note: In main.go the prompt path is ".github/agents/prompts/". 
 # We should ensure the path matches what the binary expects.
 # I'll copy the full structure to be safe.
-COPY --from=builder /app/.github ./.github
+# COPY --from=builder /app/.github ./.github
 
 # Expose port
 EXPOSE 8080

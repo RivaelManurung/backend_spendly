@@ -2,30 +2,58 @@ package service
 
 import (
 	"context"
-	"encoding/json"
+	"math"
 
-	"github.com/google/uuid"
-	"github.com/spendly/backend/internal/ai"
-	"github.com/spendly/backend/internal/domain"
+	"github.com/spendly/backend/internal/repository"
 )
 
-// 8. Daily Insight Job (daily_insight_job)
-type ReportPipeline struct {
-	gemini *ai.GeminiClient
+type AnalyticsReport struct {
+	TotalIncome  float64            `json:"total_income"`
+	TotalExpense float64            `json:"total_expense"`
+	NetWorth     float64            `json:"net_worth"`
+	TrendData    map[string]float64 `json:"trend_data"` // For FL Chart plotting: e.g. "Food" -> % or amount
 }
 
-func NewReportPipeline(g *ai.GeminiClient) *ReportPipeline {
-	return &ReportPipeline{gemini: g}
+type ReportService interface {
+	GetMonthlyAnalytics(ctx context.Context) (*AnalyticsReport, error)
 }
 
-// GenerateDailyDigest me-run daily_digest.prompt pagi hari setiap jam 08:00 (Cron)
-func (r *ReportPipeline) GenerateDailyDigest(ctx context.Context, userID uuid.UUID, date string, yesterdayTxns []domain.Transaction) (string, error) {
-	txnsBytes, _ := json.Marshal(yesterdayTxns)
-	
-	res, err := r.gemini.ExecutePrompt(ctx, "daily_digest", map[string]string{
-		"date":             date,
-		"transactions":     string(txnsBytes),
-	}, false)
+type reportService struct {
+	txRepo repository.TransactionRepository
+}
 
-	return res, err
+func NewReportService(txRepo repository.TransactionRepository) ReportService {
+	return &reportService{txRepo: txRepo}
+}
+
+func (s *reportService) GetMonthlyAnalytics(ctx context.Context) (*AnalyticsReport, error) {
+	// Querying raw instead of pulling everything into memory is better for large datasets
+	txs, err := s.txRepo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	report := &AnalyticsReport{
+		TrendData: make(map[string]float64),
+	}
+
+	for _, tx := range txs {
+		switch tx.Type {
+		case "income":
+			report.TotalIncome += tx.Amount
+		case "expense":
+			report.TotalExpense += tx.Amount
+
+			// Categorization trends (for FL Chart)
+			catName := "Uncategorized"
+			if tx.Category.Label != "" {
+				catName = tx.Category.Label
+			}
+			report.TrendData[catName] += tx.Amount
+		}
+	}
+
+	report.NetWorth = math.Round((report.TotalIncome-report.TotalExpense)*100) / 100
+
+	return report, nil
 }

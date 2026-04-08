@@ -2,115 +2,67 @@ package http
 
 import (
 	"net/http"
-	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/spendly/backend/internal/handler/dto"
-	"github.com/spendly/backend/internal/repository"
+	"github.com/spendly/backend/internal/domain"
+	"github.com/spendly/backend/internal/service"
 )
 
 type TransactionHandler struct {
-	repo repository.TransactionRepository
+	txSvc service.TransactionService
 }
 
-func NewTransactionHandler(repo repository.TransactionRepository) *TransactionHandler {
-	return &TransactionHandler{repo: repo}
+func NewTransactionHandler(txSvc service.TransactionService) *TransactionHandler {
+	return &TransactionHandler{txSvc: txSvc}
 }
 
-// ListTransactions returns paginated transactions for a user
-// @Summary List Transactions
-// @Description Get a list of transactions for current user with pagination
-// @Tags transactions
-// @Param limit query int false "Results per page"
-// @Param offset query int false "Offset results"
-// @Produce json
-// @Success 200 {array} dto.TransactionResponse
-// @Router /transactions [get]
-func (h *TransactionHandler) ListTransactions(c *gin.Context) {
-	userIDStr := c.Query("user_id")
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+func (h *TransactionHandler) Create(c *gin.Context) {
+	var req struct {
+		ID          string    `json:"id"`
+		Title       string    `json:"title" binding:"required"`
+		Amount      float64   `json:"amount" binding:"required"`
+		CategoryID  string    `json:"category_id" binding:"required"`
+		Type        string    `json:"type" binding:"required"` // income, expense, goal
+		Note        string    `json:"note"`
+		IsRecurring bool      `json:"is_recurring"`
+		Date        time.Time `json:"date"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	limitStr := c.Query("limit")
-	limit, _ := strconv.Atoi(limitStr)
-	if limit <= 0 {
-		limit = 20
-	}
+	deviceID := c.GetHeader("X-Device-ID")
 
-	offsetStr := c.Query("offset")
-	offset, _ := strconv.Atoi(offsetStr)
+	var tx *domain.Transaction
+	var err error
 
-	txns, err := h.repo.FindAllByUserID(c.Request.Context(), userID, limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch transactions"})
-		return
-	}
-
-	// Map to DTOs
-	resp := make([]dto.TransactionResponse, len(txns))
-	for i, t := range txns {
-		resp[i] = dto.TransactionResponse{
-			ID:                   t.ID.String(),
-			CategoryID:           t.CategoryID,
-			Amount:               t.Amount,
-			Currency:             t.Currency,
-			AmountInBase:         t.AmountInBase,
-			Description:          t.Description,
-			Merchant:             t.Merchant,
-			Source:               t.Source,
-			TransactionDate:      t.TransactionDate,
-			AICategorySuggestion: t.AICategorySuggestion,
-			AIConfidenceScore:    t.AIConfidenceScore,
-			CreatedAt:            t.CreatedAt,
+	if req.ID != "" {
+		// This is likely a sync request with a pre-defined local ID
+		if req.Date.IsZero() {
+			req.Date = time.Now()
 		}
+		tx, err = h.txSvc.SyncTransaction(c.Request.Context(), req.ID, req.Title, req.Amount, req.CategoryID, req.Type, req.Note, req.IsRecurring, req.Date, deviceID)
+	} else {
+		tx, err = h.txSvc.CreateTransaction(c.Request.Context(), req.Title, req.Amount, req.CategoryID, req.Type, req.Note, req.IsRecurring)
 	}
 
-	c.JSON(http.StatusOK, resp)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, tx)
 }
 
-// GetByID returns a single transaction by ID
-// @Summary Get Transaction
-// @Description Get a single transaction by its UUID
-// @Tags transactions
-// @Param id path string true "Transaction UUID"
-// @Produce json
-// @Success 200 {object} dto.TransactionResponse
-// @Router /transactions/:id [get]
-func (h *TransactionHandler) GetByID(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+func (h *TransactionHandler) GetTransactions(c *gin.Context) {
+	txs, err := h.txSvc.GetAllTransactions(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid transaction ID"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	txn, err := h.repo.GetByID(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch transaction"})
-		return
-	}
-
-	if txn == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "transaction not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, dto.TransactionResponse{
-		ID:                   txn.ID.String(),
-		CategoryID:           txn.CategoryID,
-		Amount:               txn.Amount,
-		Currency:             txn.Currency,
-		AmountInBase:         txn.AmountInBase,
-		Description:          txn.Description,
-		Merchant:             txn.Merchant,
-		Source:               txn.Source,
-		TransactionDate:      txn.TransactionDate,
-		AICategorySuggestion: txn.AICategorySuggestion,
-		AIConfidenceScore:    txn.AIConfidenceScore,
-		CreatedAt:            txn.CreatedAt,
-	})
+	c.JSON(http.StatusOK, gin.H{"data": txs})
 }

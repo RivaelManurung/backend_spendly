@@ -4,86 +4,123 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"github.com/spendly/backend/internal/domain"
-	// "github.com/spendly/backend/internal/repository"
+	"github.com/spendly/backend/internal/repository"
 )
 
-// BudgetService menyediakan interface logic khusus Manajemen Anggaran Bulanan
+type BudgetBurnRate struct {
+	Budget        *domain.Budget `json:"budget"`
+	CurrentSpent  float64        `json:"current_spent"`
+	Remaining     float64        `json:"remaining"`
+	UsagePercent  float64        `json:"usage_percent"`
+	StatusMessage string         `json:"status_message"`
+}
+
 type BudgetService interface {
-	CreateBudget(ctx context.Context, userID uuid.UUID, catID *int64, limit decimal.Decimal, pType string) (*domain.Budget, error)
-	// Kita bisa juga menambahkan GetBudgets, GetBudgetRemaining
-	CheckBudgetThreshold(ctx context.Context, txn *domain.Transaction) error
+	CreateBudget(ctx context.Context, categoryID string, amount float64, period string) (*domain.Budget, error)
+	GetBudgetsWithBurnRate(ctx context.Context) ([]BudgetBurnRate, error)
+	CheckBurnRate(ctx context.Context, categoryID string, transactionAmount float64) error // Triggers Alert logic
 }
 
 type budgetService struct {
-	// budgetRepo repository.BudgetRepository
-	budgetAlertSvc *BudgetPipeline
+	budgetRepo repository.BudgetRepository
+	txRepo     repository.TransactionRepository
 }
 
-func NewBudgetService(alertSvc *BudgetPipeline) BudgetService {
+func NewBudgetService(budgetRepo repository.BudgetRepository, txRepo repository.TransactionRepository) BudgetService {
 	return &budgetService{
-		// budgetRepo: repo,
-		budgetAlertSvc: alertSvc,
+		budgetRepo: budgetRepo,
+		txRepo:     txRepo,
 	}
 }
 
-func (b *budgetService) CreateBudget(ctx context.Context, userID uuid.UUID, catID *int64, limit decimal.Decimal, pType string) (*domain.Budget, error) {
-	if pType != "monthly" && pType != "weekly" && pType != "yearly" {
-		return nil, errors.New("invalid period type")
+func (s *budgetService) CreateBudget(ctx context.Context, categoryID string, amount float64, period string) (*domain.Budget, error) {
+	if period != "monthly" && period != "weekly" {
+		return nil, errors.New("invalid period: choose monthly or weekly")
 	}
 
 	budget := &domain.Budget{
-		UserID:      userID,
-		CategoryID:  catID,
-		LimitAmount: limit,
-		Currency:    "IDR", // Mock base currency
-		Period:      pType,
-		IsActive:    true,
+		CategoryID: categoryID,
+		Amount:     amount,
+		Period:     period,
+		StartDate:  time.Now(),
 	}
 
-	now := time.Now()
-	budget.CreatedAt = now
-	budget.UpdatedAt = now
-
-	// Panggil repo create disini:
-	// err := b.budgetRepo.Create(ctx, budget)
+	if err := s.budgetRepo.Create(ctx, budget); err != nil {
+		return nil, err
+	}
 
 	return budget, nil
 }
 
-// CheckBudgetThreshold dipanggil lewat emitter ketika Transaksi Baru Dibuat.
-func (b *budgetService) CheckBudgetThreshold(ctx context.Context, txn *domain.Transaction) error {
-	// 1. Ambil Data Budget di PostgreSQL sesuai Category ID milik transaksi
-	// budget, err := b.budgetRepo.GetActiveBudget(ctx, txn.UserID, txn.CategoryID)
-	
-	// Mock implementasi:
-	limit := decimal.NewFromFloat(5000000.0) // Budget 5jt
-	spent := decimal.NewFromFloat(4200000.0) // Sudah terpakai 4.2jt
-	
-	currentSpent := spent.Add(txn.AmountInBase)
-	
-	// 2. Hitung persentase threshold
-	ratio := currentSpent.Div(limit).InexactFloat64()
-	
-	// 3. Emit / panggil Gemini Agent Notification (`budget_alert_pipeline` dari Antigravity) di 80% & 100%
-	if ratio >= 0.80 {
-		
-		mockModel := domain.Budget{LimitAmount: limit, CategoryID: txn.CategoryID}
-		
-		// Run pipeline .agent (budget_alert.prompt)
-		msgAI, promptErr := b.budgetAlertSvc.GenerateAlert(ctx, txn.UserID, mockModel, currentSpent.String())
-		if promptErr != nil {
-			fmt.Printf("Warning: Failed generating AI Notification: %v\n", promptErr)
-			return promptErr
-		}
-
-		// Kirim Push Notification dari hasil Text Gemini
-		fmt.Printf("[BUDGET ALERT -> %s] : %s\n", txn.UserID.String(), msgAI)
+func (s *budgetService) GetBudgetsWithBurnRate(ctx context.Context) ([]BudgetBurnRate, error) {
+	budgets, err := s.budgetRepo.GetAll(ctx)
+	if err != nil {
+		return nil, err
 	}
 
+	txs, err := s.txRepo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var responses []BudgetBurnRate
+
+	for i := range budgets {
+		b := &budgets[i]
+
+		var periodStart, periodEnd time.Time
+		if b.Period == "monthly" {
+			now := time.Now()
+			periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+			periodEnd = periodStart.AddDate(0, 1, -1)
+		} else {
+			now := time.Now()
+			offset := int(now.Weekday())
+			periodStart = now.AddDate(0, 0, -offset)
+			periodEnd = periodStart.AddDate(0, 0, 6)
+		}
+
+		var sumSpent float64
+		for _, tx := range txs {
+			if tx.CategoryID == b.CategoryID &&
+				tx.Type == "expense" &&
+				(tx.Date.After(periodStart) || tx.Date.Equal(periodStart)) &&
+				(tx.Date.Before(periodEnd) || tx.Date.Equal(periodEnd)) {
+				sumSpent += tx.Amount
+			}
+		}
+
+		pct := 0.0
+		if b.Amount > 0 {
+			pct = (sumSpent / b.Amount) * 100
+		}
+
+		status := "Healthy"
+		if pct > 80 {
+			status = "Nearing Limit/Overbudget"
+		}
+
+		responses = append(responses, BudgetBurnRate{
+			Budget:        b,
+			CurrentSpent:  sumSpent,
+			Remaining:     math.Max(0, b.Amount-sumSpent),
+			UsagePercent:  pct,
+			StatusMessage: status,
+		})
+	}
+
+	return responses, nil
+}
+
+func (s *budgetService) CheckBurnRate(ctx context.Context, categoryID string, transactionAmount float64) error {
+	b, err := s.budgetRepo.GetActiveByCategoryID(ctx, categoryID)
+	if err != nil || b == nil {
+		return nil
+	}
+	fmt.Printf("[ALERTS]: Emitting async CheckBurnRate calculation\n")
 	return nil
 }

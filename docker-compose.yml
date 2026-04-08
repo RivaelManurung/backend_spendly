@@ -7,10 +7,10 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: spendly
     ports:
-      - "5432:5432"
+      - "5400:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # - ./migrations/002_seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
@@ -25,8 +25,9 @@ services:
     env_file:
       - .env
     environment:
-      DB_DSN: "postgres://postgres:password@db:5432/spendly?sslmode=disable"
-      HTTP_PORT: "8080"
+      DB_TYPE: "postgres"
+      DB_DSN: "postgres://postgres:postgres@db:5432/spendly?sslmode=disable"
+      PORT: "8080"
 
 volumes:
   postgres_data:
